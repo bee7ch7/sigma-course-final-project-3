@@ -1,0 +1,62 @@
+name: "Terragrunt CI/CD Pipeline - DEV"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - aws/final_project/dev-001/eu-central-1/**
+  pull_request:
+    branches:
+      - main
+    paths:
+      - aws/final_project/dev-001/eu-central-1/**
+env:
+  WORKING_DIR: aws/final_project/dev-001/eu-central-1/
+
+jobs:
+  iac:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.3
+          terraform_wrapper: false
+
+      - name: Setup Terragrunt
+        uses: autero1/action-terragrunt@v1.1.0
+        with:
+          terragrunt_version: 0.55.1
+
+      - name: Terragrunt Format
+        id: fmt
+        run: terragrunt hclfmt --terragrunt-working-dir $WORKING_DIR --terragrunt-check
+
+      - name: Terragrunt Init
+        id: init
+        run: terragrunt run-all init --terragrunt-working-dir $WORKING_DIR  --terragrunt-non-interactive
+
+      - name: Terragrunt Validate
+        id: validate
+        run: terragrunt run-all validate -no-color --terragrunt-working-dir $WORKING_DIR  --terragrunt-non-interactive
+
+      - name: Terragrunt Plan
+        id: plan
+        if: github.event_name == 'pull_request'
+        run: terragrunt run-all plan -no-color --terragrunt-working-dir $WORKING_DIR  --terragrunt-non-interactive
+        
+      - name: Terragrunt Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          terragrunt run-all apply --terragrunt-working-dir $WORKING_DIR --terragrunt-non-interactive

@@ -1,0 +1,75 @@
+name: 'Ansible - restore database - DEV'
+
+on:
+  workflow_run:
+    workflows:
+      - "Terragrunt CI/CD Pipeline - DEV"
+    types: 
+      - completed
+    branches:
+      - main
+
+env:
+  APPLICATION_ENV: dev
+  APPLICATION_NAME: final
+
+jobs:
+  mysql:
+    name: 'Ansible'
+    runs-on: ubuntu-latest
+    steps:
+      
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-central-1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python packages
+        run: |
+          source /opt/pipx/venvs/ansible-core/bin/activate
+          python -m pip install cryptography pyOpenSSL botocore boto3
+
+      - name: Get RDS security group id
+        id: rds_sg
+        run: |
+          echo "RDS_SG_ID=$(aws ec2 describe-security-groups --query "SecurityGroups[?contains(GroupName, '$APPLICATION_ENV-$APPLICATION_NAME-db')].GroupId" --output text)" >> $GITHUB_OUTPUT
+          
+      - name: Add ingress rule for security group
+        run: |
+          aws ec2 authorize-security-group-ingress \
+          --group-id $RDS_SG_ID \
+          --protocol tcp \
+          --port 3306 \
+          --cidr $(curl http://ifconfig.me)/32
+        env:
+          RDS_SG_ID: ${{ steps.rds_sg.outputs.RDS_SG_ID }}
+
+      - name: Run database restoration procedure
+        uses: dawidd6/action-ansible-playbook@v2
+        with:
+          # Required, playbook filepath
+          playbook: ansible/import_data.yaml
+          configuration: |
+            [defaults]
+            host_key_checking = false
+            inventory         = ./hosts.txt
+
+      - name: Remove ingress rule for security group
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id $RDS_SG_ID \
+            --protocol tcp \
+            --port 3306 \
+            --cidr $(curl http://ifconfig.me)/32
+        env:
+          RDS_SG_ID: ${{ steps.rds_sg.outputs.RDS_SG_ID }}
